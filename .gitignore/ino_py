@@ -1,0 +1,287 @@
+/*
+ * Universidad del Valle de Guatemala
+ * Procesamiento de Senales
+ * 
+ * Autores:
+ * Gerardo Molina
+ * Isaac Rodriguez
+ * 
+ * Proyecto #1
+ * 
+ * Referencias:
+ * Se utilizo varios sitios como referencia para la codificacion del siguiente codigo.
+ * 
+ * https://playground.arduino.cc/interfacing/python
+ *
+ * https://robologs.net/2014/10/15/tutorial-de-arduino-y-mpu-6050/
+ *
+ * https://github.com/mattzzw/Arduino-mpu6050/blob/master/arduino_imu_firmware.ino
+ *
+ * https://playground.arduino.cc/Main/MPU-6050#short
+ * 
+ * FUNCIONAMIENTO:
+ * 
+*/
+// Se incluyen las librerias a utilizar.
+// Wire para I2C.
+#include <Wire.h>
+// Math para calculos matematicos.
+#include <math.h>
+// Se define la direccion y frecuencia de muestreo.
+#define MPU_ADDR 0x68
+#define FREQ 60.0
+// Se definen las variables utilizadas
+double sensibilidad = 0;//Sensibilidad para +- 2G
+double gyrox,gyroy,gyroz,accx,accy,accz;
+double wx,wy,wz,ax,ay,az,w_x,w_y,w_z,a_x,a_y,a_z,wx_off,wy_off,wz_off;
+double theta_a, phi_a, theta_g, phi_g;
+double Xmax,Ymax,Zmax,Xmin,Ymin,Zmin;
+// Se hace la configuracion del programa
+void setup(){
+  // Se inicializan las variables
+  gyrox=0;
+  gyroy=0;
+  gyroz=0;
+  accx=0;
+  accy=0;
+  accz=0;
+  wx=0;
+  wy=0;
+  wz=0;
+  ax=0;
+  ay=0;
+  az=0;
+  // Se inicia la comunicacion Serial con Python
+  Serial.begin(9600);
+  //Se inicia la comunicacion I2C
+  Wire.begin();
+  // Se despierta el MPU - Registro PWR_MGMT_1 en 0x00
+  i2c_write_reg(MPU_ADDR, 0x6b, 0x00);
+  // Ajustamos la sensibilidad del acelerometro a +-2G
+  i2c_write_reg(MPU_ADDR, 0x1c, 0x00);
+  // Ajustamos la sensibilidad del giroscopio a +- 250
+  i2c_write_reg(MPU_ADDR, 0x1b, 0x00);
+  // Calibramos el sensor. //
+  calibracion();
+  }
+
+void loop(){
+  conversion();
+  // Se obtienen los valores reales. //
+  w_x=wx-wx_off;
+  w_y=wy-wy_off;
+  w_z=wz-wz_off;
+   // Calibracion de Acelerometro. //
+  // ESTO SE HACE MANUAL ????????????????????????? ///
+  a_x=(2*ax-(Xmax+Xmin))/(Xmax-Xmin);
+  a_y=(2*ay-(Ymax+Ymin))/(Ymax-Ymin);
+  a_z=(2*az-(Zmax+Zmin))/(Zmax-Zmin);
+  
+  // Se procesan los angulos respectivos.//
+  theta_a=-atan2(a_x,a_z)*(180/M_PI);
+  phi_a=atan2(a_y,a_z)*(180/M_PI);
+  theta_g=0; ///// COMO HAGO EL INTEGRADOR ACA?????????????
+  phi_g=0;
+  // Se verifica si hay un puerto libre.//
+  if(Serial.available()){
+    // Se verifica si se esta pidiendo info.//
+    char rx;
+    rx=Serial.read();
+    if(rx=='.'){
+      Serial.print(w_x, 2);
+      Serial.print(", ");
+      Serial.print(w_y, 2);
+      Serial.print(", ");
+      Serial.println(w_z, 2);
+      Serial.print(a_x, 2);
+      Serial.print(", ");
+      Serial.print(a_y, 2);
+      Serial.print(", ");
+      Serial.println(a_z, 2);
+      }
+    }
+    delay(100);
+  }
+void leer_datos(){
+  // Se leen los datos de la IMU y se combinan en una sola variable.//
+  // Variables a utilizar en la funcion //
+  uint8_t data[14];
+  uint8_t error;
+  uint8_t acc_x_1,acc_y_1,acc_z_1,gyro_x_1,gyro_y_1,gyro_z_1;
+  uint8_t acc_x_0,acc_y_0,acc_z_0,gyro_x_0,gyro_y_0,gyro_z_0;
+  // Se leen datos de la IMU //
+  error=i2c_read(MPU_ADDR,0x3b,data,14);
+  if(error !=0)
+  return;
+  // DATOS DEL ACELEROMETRO //
+  // Se toman los datos de los registros ACCEL_XOUT,ACCEL_YOUT, ACCEL_ZOUT (HIGH y LOW)
+  // EN X //
+  acc_x_1=data[1];
+  acc_x_0=data[0];
+  // EN Y //
+  acc_y_1=data[3];
+  acc_y_0=data[2];
+  // EN Z //
+  acc_z_1=data[5];
+  acc_z_0=data[4];
+  // Se combinan los valores (LSB y MSB), se utiliza el bitshift y luego se suman.
+  // EN X //
+  accx=((acc_x_1 << 8) + acc_x_0 );
+  // EN Y //
+  accy=((acc_y_1 << 8) + acc_y_0 );
+  // EN Z //
+  accx=((acc_z_1 << 8) + acc_z_0 );
+  // DATOS DEL GIROSCOPIO //
+  // Se toman los datos de los registros GYRO_XOUT,GYRO_YOUT, GYRO_ZOUT (HIGH y LOW)- (Se omite TEMP_OUT)
+  // EN X //
+  gyro_x_1=data[9];
+  gyro_x_0=data[8];
+  // EN Y //
+  gyro_y_1=data[11];
+  gyro_y_0=data[10];
+  // EN Z //
+  gyro_z_1=data[13];
+  gyro_z_0=data[12];
+  // Se combinan los valores (LSB y MSB), se utiliza el bitshift y luego se suman.
+  // EN X //
+  gyrox=((gyro_x_1 << 8) + gyro_x_0 );
+  // EN Y //
+  gyroy=((gyro_y_1 << 8) + gyro_y_0 );
+  // EN Z //
+  gyroz=((gyro_z_1 << 8) + gyro_z_0 );
+  }
+void conversion(){
+  // Se convierten los valores a DPS y G //
+  // Variables a utilizar en esta funcion//
+  double Ka, Kg;
+  // Se definen las constantes Kg y Ka)
+  Ka=1/131;
+  Kg=1/16384; // REVISAR ESTA CONSTANTE !!!!!!!!!!!!!!!!?//
+  // Se hace la conoversion. //
+  // Giroscopio a Deg/s //
+  wx=gyrox/Kg;
+  wy=gyroy/Kg;
+  wz=gyroz/Kg;
+  // Acelerometro a G //
+  ax=accx/Ka;
+  ay=accy/Kg;
+  az=accz/Kg;
+  }
+void calibracion(){
+  // Se calibra el Giroscopio y el Acelerometro. //
+  // Variable utilizadas en esta funcion.//
+  uint8_t data[6];
+  uint8_t error;
+  uint8_t acc_x_1,acc_y_1,acc_z_1,gyro_x_1,gyro_y_1,gyro_z_1;
+  uint8_t acc_x_0,acc_y_0,acc_z_0,gyro_x_0,gyro_y_0,gyro_z_0;
+  double gyrox_s,gyroy_s,gyroz_s;
+  // Calibracion de Giroscopio //
+  // Para esto se obtienen varios 100 datos de cada uno. //
+  for (int i=0; i<=100;i=i+1){
+    error = i2c_read(MPU_ADDR,0x43,data,6);
+    if(error!=0)
+    return;
+    // DATOS DEL GIROSCOPIO //
+    // Se toman los datos de los registros GYRO_XOUT,GYRO_YOUT, GYRO_ZOUT (HIGH y LOW)- (Se omite TEMP_OUT)
+    // EN X //
+  // EN X //
+    gyro_x_1=data[1];
+    gyro_x_0=data[0];
+    // EN Y //
+    gyro_y_1=data[3];
+    gyro_y_0=data[2];
+    // EN Z //
+    gyro_z_1=data[5];
+    gyro_z_0=data[4];
+    // Se combinan los valores (LSB y MSB), se utiliza el bitshift y luego se suman.
+    // SE SUMAN TODOS LOS VALORES EN X //
+    gyrox_s+=((gyro_x_1 << 8) + gyro_x_0 );
+    // SE SUMAN TODOS LOS VALORES EN Y //
+    gyroy_s+=((gyro_y_1 << 8) + gyro_y_0 );
+    // SE SUMAN TODOS LOS VALORES EN Z //
+    gyroz_s+=((gyro_z_1 << 8) + gyro_z_0 );
+  }
+  // Se obtiene el promedio de los valores.
+  wx_off=gyrox_s/100;
+  wy_off=gyroy_s/100;
+  wz_off=gyroz_s/100;
+
+  // LA CALIBRACION DEL ACELEROMETRO SE HACE EN EL LOOP PRINCIPAL.//
+  // AQUI SE OBTIENEN LOS MAXIMOS Y MINIMOS.// ?????????????????????
+  Xmax=0;
+  Xmin=0;
+  Ymax=0;
+  Ymin=0;
+  Zmax=0;
+  Zmin=0;
+ }
+
+
+
+
+
+
+
+
+
+
+
+/*
+ * La funcion i2c_write, i2c_read  y 12c_write_reg se tomaron del codigo de @mattzzw
+ * en https://github.com/mattzzw/Arduino-mpu6050/blob/master/boxctrl_6d0f_imu.py
+ * en donde escribe a la MPU de esta forma.
+*/
+  int i2c_write(int addr, int start, const uint8_t *pData, int size)
+{
+  int n, error;
+
+  Wire.beginTransmission(addr);
+  n = Wire.write(start);        // write the start address
+  if (n != 1)
+  return (-20);
+
+  n = Wire.write(pData, size);  // write data bytes
+  if (n != size)
+  return (-21);
+
+  error = Wire.endTransmission(true); // release the I2C-bus
+  if (error != 0)
+  return (error);
+
+  return (0);         // return : no error
+}
+
+
+int i2c_write_reg(int addr, int reg, uint8_t data)
+{
+  int error;
+  
+  error = i2c_write(addr, reg, &data, 1);
+  return (error);
+}
+
+int i2c_read(int addr, int start, uint8_t *buffer, int size)
+{
+  int i, n, error;
+
+  Wire.beginTransmission(addr);
+  n = Wire.write(start);
+  if (n != 1)
+  return (-10);
+
+  n = Wire.endTransmission(false);    // hold the I2C-bus
+  if (n != 0)
+  return (n);
+
+  // Third parameter is true: relase I2C-bus after data is read.
+  Wire.requestFrom(addr, size, true);
+  i = 0;
+  while(Wire.available() && i<size)
+  {
+    buffer[i++]=Wire.read();
+  }
+  if ( i != size)
+  return (-11);
+
+  return (0);  // return : no error
+}
